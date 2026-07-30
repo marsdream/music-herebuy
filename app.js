@@ -62,7 +62,7 @@ async function loadTracks(source) {
   try {
     const data = await supabaseGet(
       'charts',
-      `?date=eq.${CONFIG.TODAY}&source=eq.${source}&rank=asc&limit=50`
+      `?date=eq.${CONFIG.TODAY}&source=eq.${source}&order=rank.asc&limit=50`
     );
     if (!data.length) {
       el.innerHTML = '<div class="empty">No chart data for today yet.</div>';
