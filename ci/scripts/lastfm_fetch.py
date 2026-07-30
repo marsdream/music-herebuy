@@ -68,12 +68,13 @@ def main():
     print(f"[lastfm] Wrote {len(tracks)} tracks to {output_path}")
     print(f"[lastfm] Output: {output_path}")
 
-    # --- Write to Supabase `charts` table (warning only on failure) ---
+    # --- Write to Supabase `charts` table (upsert by date+source+rank) ---
     try:
-        from supabase_client import bulk_insert, delete_where
+        from supabase_client import upsert
         today_iso = today  # e.g. "2026-07-30"
-        rows = [
-            {
+        succeeded = 0
+        for i, t in enumerate(tracks):
+            row = {
                 "date": today_iso,
                 "source": "lastfm",
                 "track_name": t.get("title", ""),
@@ -81,17 +82,11 @@ def main():
                 "rank": i + 1,
                 "playcount": t.get("playcount", 0),
                 "mbid": t.get("mbid", "") or None,
-                "spotify_url": None,
+                # Do NOT overwrite existing spotify_url (upsert preserves it)
             }
-            for i, t in enumerate(tracks)
-        ]
-        if rows:
-            # Delete stale data for this date+source before inserting fresh batch
-            delete_where("charts", {"date": today_iso, "source": "lastfm"})
-            if bulk_insert("charts", rows):
-                print(f"[lastfm] Supabase: inserted {len(rows)} charts rows (source=lastfm)")
-            else:
-                print("[lastfm] Supabase: bulk insert failed (warning, local JSON unaffected)")
+            if upsert("charts", "date,source,rank", row):
+                succeeded += 1
+        print(f"[lastfm] Supabase: upserted {succeeded}/{len(tracks)} rows (source=lastfm)")
     except Exception as e:
         print(f"[lastfm] Supabase: skipped (init error: {e})", file=sys.stderr)
 
