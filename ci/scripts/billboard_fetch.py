@@ -88,7 +88,7 @@ def main():
         # Upsert one-by-one using date+source+rank as conflict key
         succeeded = 0
         for row in rows:
-            if upsert("charts", "date,source,rank", row):
+            if upsert("charts", "date,source,track_name,artist", row):
                 succeeded += 1
         print(f"[billboard] Supabase: upserted {succeeded}/{len(rows)} rows (source=billboard)")
     except Exception as e:
