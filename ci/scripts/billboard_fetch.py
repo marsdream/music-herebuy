@@ -8,6 +8,8 @@ Fields: song, artist, this_week, last_week, peak_position, weeks_on_chart
 """
 
 import base64
+import urllib.parse
+import urllib.parse
 import json
 import os
 import sys
@@ -68,22 +70,22 @@ def main():
 
     # --- Write to Supabase `charts` table (warning only on failure) ---
     try:
-        from supabase_client import bulk_insert, delete_where
+        from supabase_client import bulk_insert
         today_iso = today
-        rows = [
-            {
+        rows = []
+        for entry in entries:
+            title = entry.get("song", "")
+            artist = entry.get("artist", "")
+            sp_q = urllib.parse.quote(f"{title} {artist}")
+            rows.append({
                 "date": today_iso,
                 "source": "billboard",
-                "track_name": entry.get("song", ""),
-                "artist": entry.get("artist", ""),
+                "track_name": title,
+                "artist": artist,
                 "rank": int(entry.get("this_week", 0)),
-                "spotify_url": None,
-            }
-            for entry in entries
-        ]
+                "spotify_url": f"https://open.spotify.com/search/{sp_q}",
+            })
         if rows:
-            # Delete stale data for this date+source before inserting fresh batch
-            delete_where("charts", {"date": today_iso, "source": "billboard"})
             if bulk_insert("charts", rows):
                 print(f"[billboard] Supabase: inserted {len(rows)} charts rows (source=billboard)")
             else:
