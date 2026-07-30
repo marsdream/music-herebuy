@@ -84,7 +84,7 @@ def main():
                 "mbid": t.get("mbid", "") or None,
                 # Do NOT overwrite existing spotify_url (upsert preserves it)
             }
-            if upsert("charts", "date,source,rank", row):
+            if upsert("charts", "date,source,track_name,artist", row):
                 succeeded += 1
         print(f"[lastfm] Supabase: upserted {succeeded}/{len(tracks)} rows (source=lastfm)")
     except Exception as e:
