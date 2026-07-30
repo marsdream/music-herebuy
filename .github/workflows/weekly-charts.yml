@@ -48,4 +48,6 @@ jobs:
       - name: Run AI analyze
         env:
           MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
-        run: python3 ci/scripts/ai_analyze.py
+        run: |
+          echo "$MINIMAX_API_KEY" > ~/.openclaw/credentials/minimax-portal_api_key.txt
+          python3 ci/scripts/ai_analyze.py
