@@ -79,6 +79,8 @@ def main():
                 "track_name": t.get("title", ""),
                 "artist": t.get("artist", ""),
                 "rank": i + 1,
+                "playcount": t.get("playcount", 0),
+                "mbid": t.get("mbid", "") or None,
                 "spotify_url": None,
             }
             for i, t in enumerate(tracks)
