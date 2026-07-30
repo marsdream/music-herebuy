@@ -68,9 +68,9 @@ def main():
 
     print(f"[billboard] Wrote {len(results)} entries to {output_path}")
 
-    # --- Write to Supabase `charts` table (warning only on failure) ---
+    # --- Write to Supabase `charts` table (upsert by date+source+rank) ---
     try:
-        from supabase_client import bulk_insert
+        from supabase_client import upsert
         today_iso = today
         rows = []
         for entry in entries:
@@ -85,11 +85,12 @@ def main():
                 "rank": int(entry.get("this_week", 0)),
                 "spotify_url": f"https://open.spotify.com/search/{sp_q}",
             })
-        if rows:
-            if bulk_insert("charts", rows):
-                print(f"[billboard] Supabase: inserted {len(rows)} charts rows (source=billboard)")
-            else:
-                print("[billboard] Supabase: bulk insert failed (warning, local JSON unaffected)")
+        # Upsert one-by-one using date+source+rank as conflict key
+        succeeded = 0
+        for row in rows:
+            if upsert("charts", "date,source,rank", row):
+                succeeded += 1
+        print(f"[billboard] Supabase: upserted {succeeded}/{len(rows)} rows (source=billboard)")
     except Exception as e:
         print(f"[billboard] Supabase: skipped (init error: {e})", file=sys.stderr)
 
