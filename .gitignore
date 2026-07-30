@@ -1,0 +1,29 @@
+# environment
+.env
+.env.local
+
+# credentials
+*.key
+credentials
+config.local.js
+
+# node
+node_modules
+
+# OS
+.DS_Store
+Thumbs.db
+
+# editor
+*.swp
+.idea
+.vscode
+
+# build
+dist
+.next
+
+# scratch / helper scripts (not part of the site)
+db_*.py
+helper.py
+setup_repos.py
