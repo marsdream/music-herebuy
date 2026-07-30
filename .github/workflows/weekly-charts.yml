@@ -1,0 +1,51 @@
+name: Weekly Charts Pipeline
+
+on:
+  schedule:
+    # Every Monday at 07:30 UTC = 15:30 Beijing time
+    - cron: '30 7 * * 1'
+  workflow_dispatch: {}
+
+jobs:
+  charts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install psycopg2-binary httpx
+
+      - name: Run Last.fm fetch
+        env:
+          LASTFM_API_KEY: ${{ secrets.LASTFM_API_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        run: |
+          # Write credentials inline (scripts read from ~/.openclaw/credentials/)
+          mkdir -p ~/.openclaw/credentials
+          echo '{"api_key":"'"$LASTFM_API_KEY"'","secret":"dummy"}' > ~/.openclaw/credentials/lastfm.json
+          echo '{"project_ref":"adfirxacvkcoasbujbgo","project_url":"https://adfirxacvkcoasbujbgo.supabase.co","rest_api":"https://adfirxacvkcoasbujbgo.supabase.co/rest/v1","db_host":"db.adfirxacvkcoasbujbgo.supabase.co","db_password":"'"$SUPABASE_DB_PASSWORD"'","personal_access_token":"'"$SUPABASE_PAT"'"}' > ~/.openclaw/credentials/supabase.json
+          echo "$SUPABASE_SERVICE_ROLE_KEY" > ~/.openclaw/credentials/supabase_service_role_key.txt
+
+          python3 ci/scripts/lastfm_fetch.py
+
+      - name: Run Billboard fetch
+        env:
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        run: |
+          python3 ci/scripts/billboard_fetch.py
+
+      - name: Run MusicBrainz lookup
+        run: python3 ci/scripts/musicbrainz_lookup.py
+
+      - name: Run AI analyze
+        env:
+          MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
+        run: python3 ci/scripts/ai_analyze.py
