@@ -1,5 +1,24 @@
 /* === app.js — Music Herebuy frontend === */
 
+// Fetch the latest available date from the charts table
+async function getLatestDate() {
+  try {
+    const data = await supabaseGet('charts', '?select=date&order=date.desc&limit=1');
+    return data.length ? data[0].date : null;
+  } catch (e) {
+    console.warn('getLatestDate failed:', e);
+    return null;
+  }
+}
+
+// Format a date string (YYYY-MM-DD) to human-readable
+function fmtDate(dateStr) {
+  if (!dateStr) return '—';
+  const d = new Date(dateStr + 'T00:00:00');
+  return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+}
+
+
 const API = CONFIG.SUPABASE_REST;
 
 const headers = () => ({
@@ -43,7 +62,7 @@ function renderHome() {
     </footer>
   `;
 
-  document.getElementById('today-badge').textContent = `📅 ${CONFIG.TODAY}`;
+  // today-badge set dynamically after fetching latest date
 
   document.querySelectorAll('[data-source]').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -53,6 +72,11 @@ function renderHome() {
     });
   });
 
+  // Fetch latest date and set badge, then load
+  const latestDate = await getLatestDate();
+  if (latestDate) {
+    document.getElementById('today-badge').textContent = `📅 ${fmtDate(latestDate)}`;
+  }
   loadTracks('lastfm');
 }
 
@@ -60,9 +84,11 @@ async function loadTracks(source) {
   const el = document.getElementById('track-list');
   el.innerHTML = '<div class="loading">Loading tracks</div>';
   try {
+    const latestDate = await getLatestDate();
+    if (!latestDate) { el.innerHTML = '<div class="empty">No chart data available.</div>'; return; }
     const data = await supabaseGet(
       'charts',
-      `?date=eq.${CONFIG.TODAY}&source=eq.${source}&order=rank.asc&limit=50`
+      `?date=eq.${latestDate}&source=eq.${source}&order=rank.asc&limit=50`
     );
     if (!data.length) {
       el.innerHTML = '<div class="empty">No chart data for today yet.</div>';
@@ -105,13 +131,14 @@ async function renderIdeas() {
       <p style="margin-top:30px">music.herebuy.us · built with ❤️ by Yuki</p>
     </footer>
   `;
-  document.getElementById('today-badge').textContent = `📅 ${CONFIG.TODAY}`;
+  // today-badge set dynamically after fetching latest date
 
   const grid = document.getElementById('ideas-grid');
   try {
     const ideas = await supabaseGet(
       'music_ideas',
-      `?date=eq.${CONFIG.TODAY}&created_at=desc`
+      `const latestDate = await getLatestDate(); if (!latestDate) { grid.innerHTML = '<div class=\"empty\">No chart data available.</div>'; return; }
+      `?date=eq.${latestDate}&created_at=desc``
     );
 
     // Fetch generation records
