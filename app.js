@@ -1,24 +1,5 @@
 /* === app.js — Music Herebuy frontend === */
 
-// Fetch the latest available date from the charts table
-async function getLatestDate() {
-  try {
-    const data = await supabaseGet('charts', '?select=date&order=date.desc&limit=1');
-    return data.length ? data[0].date : null;
-  } catch (e) {
-    console.warn('getLatestDate failed:', e);
-    return null;
-  }
-}
-
-// Format a date string (YYYY-MM-DD) to human-readable
-function fmtDate(dateStr) {
-  if (!dateStr) return '—';
-  const d = new Date(dateStr + 'T00:00:00');
-  return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-}
-
-
 const API = CONFIG.SUPABASE_REST;
 
 const headers = () => ({
@@ -39,6 +20,24 @@ async function supabaseGet(table, qs = '', opts = {}) {
     throw new Error(`${table} ${resp.status}: ${err.slice(0, 200)}`);
   }
   return resp.json();
+}
+
+// Fetch the latest available date from the charts table
+async function getLatestDate() {
+  try {
+    const data = await supabaseGet('charts', '?select=date&order=date.desc&limit=1');
+    return data.length ? data[0].date : null;
+  } catch (e) {
+    console.warn('getLatestDate failed:', e);
+    return null;
+  }
+}
+
+// Format YYYY-MM-DD to human-readable
+function fmtDate(dateStr) {
+  if (!dateStr) return '—';
+  const d = new Date(dateStr + 'T00:00:00');
+  return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
 }
 
 // ── index.html (home) ──
@@ -62,33 +61,46 @@ function renderHome() {
     </footer>
   `;
 
-  // today-badge set dynamically after fetching latest date
+  // Fetch latest date and set badge, then load
+  getLatestDate().then(latestDate => {
+    if (latestDate) {
+      document.getElementById('today-badge').textContent = `📅 ${fmtDate(latestDate)}`;
+    }
+    loadTracks('lastfm', latestDate);
+  });
 
   document.querySelectorAll('[data-source]').forEach(btn => {
     btn.addEventListener('click', () => {
       document.querySelectorAll('[data-source]').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
-      loadTracks(btn.dataset.source);
+      const activeDate = document.getElementById('today-badge').dataset.date || null;
+      loadTracks(btn.dataset.source, activeDate);
     });
   });
-
-  // Fetch latest date and set badge, then load
-  const latestDate = await getLatestDate();
-  if (latestDate) {
-    document.getElementById('today-badge').textContent = `📅 ${fmtDate(latestDate)}`;
-  }
-  loadTracks('lastfm');
 }
 
-async function loadTracks(source) {
+async function loadTracks(source, date) {
   const el = document.getElementById('track-list');
   el.innerHTML = '<div class="loading">Loading tracks</div>';
+
+  // If no date provided, fetch latest
+  if (!date) {
+    date = await getLatestDate();
+    if (date) {
+      document.getElementById('today-badge').textContent = `📅 ${fmtDate(date)}`;
+      document.getElementById('today-badge').dataset.date = date;
+    }
+  }
+
+  if (!date) {
+    el.innerHTML = '<div class="empty">No chart data available.</div>';
+    return;
+  }
+
   try {
-    const latestDate = await getLatestDate();
-    if (!latestDate) { el.innerHTML = '<div class="empty">No chart data available.</div>'; return; }
     const data = await supabaseGet(
       'charts',
-      `?date=eq.${latestDate}&source=eq.${source}&order=rank.asc&limit=50`
+      `?date=eq.${date}&source=eq.${source}&order=rank.asc&limit=50`
     );
     if (!data.length) {
       el.innerHTML = '<div class="empty">No chart data for today yet.</div>';
@@ -131,18 +143,26 @@ async function renderIdeas() {
       <p style="margin-top:30px">music.herebuy.us · built with ❤️ by Yuki</p>
     </footer>
   `;
-  // today-badge set dynamically after fetching latest date
+
+  const latestDate = await getLatestDate();
+  if (latestDate) {
+    document.getElementById('today-badge').textContent = `📅 ${fmtDate(latestDate)}`;
+  }
 
   const grid = document.getElementById('ideas-grid');
+  if (!latestDate) {
+    grid.innerHTML = '<div class="empty">No chart data available.</div>';
+    return;
+  }
+
   try {
     const ideas = await supabaseGet(
       'music_ideas',
-      `const latestDate = await getLatestDate(); if (!latestDate) { grid.innerHTML = '<div class=\"empty\">No chart data available.</div>'; return; }
-      `?date=eq.${latestDate}&created_at=desc``
+      `?date=eq.${latestDate}&created_at=desc`
     );
 
     // Fetch generation records
-    const genResp = await fetch(`${API}/music_generations?select=*, idea_id&status=eq.success`, {
+    const genResp = await fetch(`${API}/music_generations?select=*,idea_id&status=eq.success`, {
       headers: { ...headers(), 'Accept-Profile': 'public' },
     });
     const gens = genResp.ok ? await genResp.json() : [];
