@@ -158,7 +158,7 @@ async function renderIdeas() {
   try {
     const ideas = await supabaseGet(
       'music_ideas',
-      `?date=eq.${latestDate}&created_at=desc`
+      `?date=eq.${latestDate}&order=created_at.desc`
     );
 
     // Fetch generation records
