@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 ai_analyze.py — Analyze trending music data with LLM
-Reads today's lastfm + billboard data, calls Minimax LLM,
+Reads today's lastfm + billboard data, calls GLM-4 Flash via Zhipu AI,
 outputs 3-5 music idea prompts.
 Output: ~/.openclaw/workspace/music-herebuy/data/ideas/YYYY-MM-DD.json
 """
@@ -16,13 +16,8 @@ from datetime import date
 LASTFM_DIR = os.path.expanduser("~/.openclaw/workspace/music-herebuy/data/lastfm")
 BILLBOARD_DIR = os.path.expanduser("~/.openclaw/workspace/music-herebuy/data/billboard")
 OUTPUT_DIR = os.path.expanduser("~/.openclaw/workspace/music-herebuy/data/ideas")
-TOKEN_PATH = os.path.expanduser("~/.openclaw/credentials/minimax-portal_api_key.txt")
-MINIMAX_API = "https://api.minimax.chat/v1/text/chatcompletion_v2"
-
-
-def load_token():
-    with open(TOKEN_PATH) as f:
-        return f.read().strip()
+GLM_API = "https://open.bigmodel.cn/api/paas/v4/chat/completions"
+GLM_MODEL = "glm-4-flash"
 
 
 def load_data(date_str):
@@ -33,13 +28,13 @@ def load_data(date_str):
     if os.path.exists(lastfm_path):
         with open(lastfm_path) as f:
             d = json.load(f)
-            lastfm_tracks = d.get("tracks", [])[:20]  # top 20
+            lastfm_tracks = d.get("tracks", [])[:20]
 
     billboard_chart = []
     if os.path.exists(billboard_path):
         with open(billboard_path) as f:
             d = json.load(f)
-            billboard_chart = d.get("chart", [])[:20]  # top 20
+            billboard_chart = d.get("chart", [])[:20]
 
     return lastfm_tracks, billboard_chart
 
@@ -90,9 +85,9 @@ Return ONLY valid JSON (no markdown, no explanation):
 
 
 def call_llm(token, prompt):
-    print("[ai] Calling Minimax LLM...")
+    print("[ai] Calling GLM-4 Flash...")
     payload = json.dumps({
-        "model": "MiniMax-Text-01",
+        "model": GLM_MODEL,
         "messages": [
             {"role": "user", "content": prompt}
         ],
@@ -101,8 +96,8 @@ def call_llm(token, prompt):
     })
 
     curl_cmd = [
-        "curl", "-s", "-X", "POST", MINIMAX_API,
-        "-H", f"Authorization: Bearer {token}",
+        "curl", "-s", "-X", "POST", GLM_API,
+        "-H", "Authorization: Bearer " + token,
         "-H", "Content-Type: application/json",
         "-d", payload,
     ]
@@ -131,16 +126,24 @@ def main():
     print(f"[ai] Loaded {len(lastfm_tracks)} Last.fm tracks, {len(billboard_chart)} Billboard entries")
 
     prompt = build_prompt(lastfm_tracks, billboard_chart)
-    token = load_token()
+
+    token = os.environ.get("ZHIPU_API_KEY", "")
+    if not token:
+        token_path = os.path.expanduser("~/.openclaw/credentials/minimax-portal_api_key.txt")
+        if os.path.exists(token_path):
+            with open(token_path) as f:
+                token = f.read().strip()
+    if not token:
+        print("[ai] ERROR: ZHIPU_API_KEY env var not set and no fallback token file", file=sys.stderr)
+        sys.exit(1)
+
     raw_content = call_llm(token, prompt)
 
-    # Try to extract JSON from the response
     content = raw_content.strip()
-    # Strip markdown code blocks if present
     if content.startswith("```"):
         lines = content.split("\n")
-        content = "\n".join(lines[1:])  # remove first line (```json)
-        content = content.rsplit("```", 1)[0]  # remove last line (```)
+        content = "\n".join(lines[1:])
+        content = content.rsplit("```", 1)[0]
 
     try:
         result = json.loads(content)
@@ -157,26 +160,22 @@ def main():
     print(f"[ai] Wrote analysis to {output_path}")
     print(f"[ai] Moods: {result.get('analysis', {}).get('dominant_moods', [])}")
 
-    # --- Write generated prompts to Supabase `music_ideas` table (warning only on failure) ---
-    # We also fetch the returned UUIDs back so music_generate.py can link generations->ideas.
-    inserted_ids = []  # parallel to result["prompts"]
+    inserted_ids = []
     try:
         from supabase_client import _load_creds, _resolve_service_role_key
         creds = _load_creds()
         key = _resolve_service_role_key()
         base = creds["rest_api"]
-        today_iso = today
         rows = []
         for p in result.get("prompts", []):
             rows.append({
-                "date": today_iso,
+                "date": today,
                 "mood": p.get("mood", ""),
                 "prompt": p.get("prompt", ""),
                 "style_hint": p.get("style_hint", ""),
                 "lyrics": None,
             })
         if rows:
-            # Bulk insert, return representation to get the UUIDs back
             headers = {
                 "apikey": key,
                 "Authorization": f"Bearer {key}",
@@ -190,22 +189,16 @@ def main():
                 with urllib.request.urlopen(req, timeout=60) as resp:
                     inserted = json.loads(resp.read().decode("utf-8"))
                 inserted_ids = [r.get("id") for r in inserted]
-                print(f"[ai] Supabase: inserted {len(inserted_ids)} music_ideas rows "
-                      f"(with IDs: {inserted_ids[0]}...)")
-            except urllib.error.HTTPError as e:
-                detail = e.read().decode("utf-8", errors="replace")
-                print(f"[ai] Supabase insert warning ({e.code}): {detail[:200]}", file=sys.stderr)
+                print(f"[ai] Supabase: inserted {len(inserted_ids)} music_ideas rows")
             except Exception as e:
-                print(f"[ai] Supabase insert error: {e}", file=sys.stderr)
+                print(f"[ai] Supabase insert warning: {e}", file=sys.stderr)
     except Exception as e:
         print(f"[ai] Supabase: skipped (init error: {e})", file=sys.stderr)
 
-    # Attach idea_id to each prompt so music_generate.py can read it later
     prompts = result.get("prompts", [])
     for i, p in enumerate(prompts):
         p["idea_id"] = inserted_ids[i] if i < len(inserted_ids) else None
 
-    # Rewrite output file with idea_ids embedded
     with open(output_path, "w") as f:
         json.dump(output, f, indent=2, ensure_ascii=False)
 
