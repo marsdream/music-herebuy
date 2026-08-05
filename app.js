@@ -129,31 +129,58 @@ async function renderHome() {
 async function renderIdeas() {
   const wrap = document.getElementById('content');
   wrap.innerHTML = `
-    <div class="page-title"><h1>💡 AI Music Ideas</h1><p>Prompts distilled from today's top charts</p><span class="date-badge" id="today-badge"></span></div>
+    <div class="page-title">
+      <h1>💡 AI Music Ideas</h1>
+      <p>Prompts distilled from top charts</p>
+      <div style="display:flex;gap:10px;align-items:center;margin-top:8px">
+        <span class="date-badge" id="today-badge"></span>
+        <select id="date-picker" style="font-size:14px;padding:4px 8px;border-radius:6px;border:1px solid #ccc;background:#fff">
+          <option value="">Loading dates...</option>
+        </select>
+      </div>
+    </div>
     <div class="ideas-grid" id="ideas-grid"><div class="loading">Loading ideas</div></div>
     <footer><p style="margin-top:30px">music.herebuy.us · built with ❤️ by Yuki</p></footer>
   `;
+
   const dates = await getAllDates();
-  const latestDate = dates[0] || null;
-  if (latestDate) document.getElementById('today-badge').textContent = `📅 ${fmtDate(latestDate)}`;
-  const grid = document.getElementById('ideas-grid');
-  if (!latestDate) { grid.innerHTML = '<div class="empty">No chart data available.</div>'; return; }
-  try {
-    const ideas = await supabaseGet('music_ideas', `?date=eq.${latestDate}&order=created_at.desc`);
-    const genResp = await fetch(`${API}/music_generations?select=*,idea_id&status=eq.success`, { headers: { ...headers(), 'Accept-Profile': 'public' } });
-    const gens = genResp.ok ? await genResp.json() : [];
-    const genByIdea = {};
-    for (const g of gens) { if (!genByIdea[g.idea_id]) genByIdea[g.idea_id] = []; genByIdea[g.idea_id].push(g); }
-    if (!ideas.length) { grid.innerHTML = '<div class="empty">No AI ideas for today yet.</div>'; return; }
-    grid.innerHTML = ideas.map(idea => {
-      const gs = genByIdea[idea.id] || [];
-      return `<div class="idea-card">
-        <div class="header"><span class="mood">${escHtml(idea.mood||'unknown')}</span><span class="style-hint">${escHtml(idea.style_hint||'')}</span></div>
-        <div class="prompt">${escHtml(idea.prompt)}</div>
-        ${gs.length ? gs.map(g => `<div class="generated"><span class="dot ready"></span><span class="state">✅ Generated · <em>${escHtml(g.provider||'music-2.6')}</em> · <em>${escHtml(g.created_at?g.created_at.slice(0,10):'')}</em></span><audio controls preload="metadata"><source src="${escHtml(g.s3_mp3_url)}" type="audio/mpeg"></audio></div>`).join('') : `<div class="generated"><span class="dot empty"></span><span class="state">⏳ Not yet generated</span></div>`}
-      </div>`;
-    }).join('');
-  } catch(e) { grid.innerHTML = `<div class="error">⚠ Failed: ${escHtml(e.message)}</div>`; }
+  if (!dates.length) {
+    document.getElementById('ideas-grid').innerHTML = '<div class="empty">No chart data available.</div>';
+    return;
+  }
+
+  const picker = document.getElementById('date-picker');
+  // Populate dropdown
+  picker.innerHTML = dates.map(d => `<option value="${d}">${fmtDate(d)}</option>`).join('');
+  picker.value = dates[0]; // default to latest
+  document.getElementById('today-badge').textContent = `📅 ${fmtDate(dates[0])}`;
+
+  async function loadIdeas(date) {
+    const grid = document.getElementById('ideas-grid');
+    grid.innerHTML = '<div class="loading">Loading ideas...</div>';
+    document.getElementById('today-badge').textContent = `📅 ${fmtDate(date)}`;
+    try {
+      const ideas = await supabaseGet('music_ideas', `?date=eq.${date}&order=created_at.desc`);
+      const genResp = await fetch(`${API}/music_generations?select=*,idea_id&status=eq.success`, { headers: { ...headers(), 'Accept-Profile': 'public' } });
+      const gens = genResp.ok ? await genResp.json() : [];
+      const genByIdea = {};
+      for (const g of gens) { if (!genByIdea[g.idea_id]) genByIdea[g.idea_id] = []; genByIdea[g.idea_id].push(g); }
+      if (!ideas.length) { grid.innerHTML = '<div class="empty">No AI ideas for this date.</div>'; return; }
+      grid.innerHTML = ideas.map(idea => {
+        const gs = genByIdea[idea.id] || [];
+        return `<div class="idea-card">
+          <div class="header"><span class="mood">${escHtml(idea.mood||'unknown')}</span><span class="style-hint">${escHtml(idea.style_hint||'')}</span></div>
+          <div class="prompt">${escHtml(idea.prompt)}</div>
+          ${gs.length ? gs.map(g => `<div class="generated"><span class="dot ready"></span><span class="state">✅ Generated · <em>${escHtml(g.provider||'music-2.6')}</em> · <em>${escHtml(g.created_at?g.created_at.slice(0,10):'')}</em></span><audio controls preload="metadata"><source src="${escHtml(g.s3_mp3_url)}" type="audio/mpeg"></audio></div>`).join('') : `<div class="generated"><span class="dot empty"></span><span class="state">⏳ Not yet generated</span></div>`}
+        </div>`;
+      }).join('');
+    } catch(e) { grid.innerHTML = `<div class="error">⚠ Failed: ${escHtml(e.message)}</div>`; }
+  }
+
+  // On picker change, reload
+  picker.addEventListener('change', () => loadIdeas(picker.value));
+  // Initial load
+  loadIdeas(dates[0]);
 }
 
 async function renderTrack() {
@@ -184,3 +211,4 @@ function main() {
   else if (page === 'track') renderTrack();
 }
 document.addEventListener('DOMContentLoaded', main);
+
