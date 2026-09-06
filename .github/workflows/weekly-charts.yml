@@ -3,6 +3,8 @@ name: Weekly Charts Pipeline
 on:
   schedule:
     - cron: '30 7 * * 1'
+    - cron: '30 7 * * 3'
+    - cron: '30 7 * * 5'
   workflow_dispatch: {}
 
 jobs:
