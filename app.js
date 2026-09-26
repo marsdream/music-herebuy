@@ -10,9 +10,12 @@ const headers = () => ({
 
 const COVER_CDN = 'https://id5qsfmqsm5ukg.1yunpan.com';
 
-function coverUrl(mbid) {
-  if (!mbid) return null;
-  return `${COVER_CDN}/covers/${mbid}.jpg`;
+function coverUrl(track) {
+  // Prefer stored cover_url from Supabase (iTunes direct for Billboard, S3 URL for Last.fm)
+  if (track && track.cover_url) return track.cover_url;
+  // Fall back to MBID-based 1yunpan URL (Last.fm)
+  if (track && track.mbid) return `${COVER_CDN}/covers/${track.mbid}.jpg`;
+  return null;
 }
 
 function escHtml(s) { if (s == null) return ''; const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
@@ -108,8 +111,9 @@ async function renderHome() {
       } else {
         trendHtml = `<span class="trend new" title="New entry this week">NEW</span>`;
       }
-      const coverImg = cover
-        ? `<img class="track-cover" src="${escHtml(cover)}" alt="" onerror="this.style.display='none'" loading="lazy">`
+      const coverVal = coverUrl(t);
+      const coverImg = coverVal
+        ? `<img class="track-cover" src="${escHtml(coverVal)}" alt="" onerror="this.style.display='none'" loading="lazy">`
         : `<span class="track-cover-placeholder">♪</span>`;
       return `<div class="track-row">
         <span class="rank ${rank <= 3 ? 'top3' : ''}">#${rank}</span>
@@ -205,9 +209,9 @@ async function renderTrack() {
     if (!t) { wrap.innerHTML += '<div class="error">Track not found</div>'; return; }
     const genResp = await fetch(`${API}/music_generations?id=eq.${trackId}&select=*,idea!inner(id,mood,prompt,style_hint)`, { headers: { ...headers(), 'Accept-Profile': 'public' } });
     const gens = genResp.ok ? await genResp.json() : [];
-    const cover = coverUrl(t.mbid || '');
-    const coverHtml = cover
-      ? `<img class="track-detail-cover" src="${escHtml(cover)}" alt="" onerror="this.parentElement.innerHTML='🎧'">`
+    const coverVal = coverUrl(t);
+    const coverHtml = coverVal
+      ? `<img class="track-detail-cover" src="${escHtml(coverVal)}" alt="" onerror="this.parentElement.innerHTML='<div class=track-detail-cover-placeholder>🎧</div>'">`
       : `<div class="track-detail-cover-placeholder">🎧</div>`;
     if (gens.length) {
       const g = gens[0], idea = g.idea;
