@@ -1,116 +1,108 @@
 #!/usr/bin/env python3
-"""Fetch album covers and upload to 1yunpan S3.
-Skips tracks already having covers. Falls back to default cover.
+"""Fetch album covers and upload to Cloudflare R2 (img.osp.io).
+Skips tracks already having covers in R2. Falls back to default cover.
 """
-import os, sys, json, time
+import os, sys, json, time, re, urllib.parse
 import boto3
 from botocore.config import Config
 import urllib.request
 
-# S3 config
-S3_ENDPOINT = 'https://s3.1yunpan.com'
-S3_BUCKET = '5qsfmqsm5ukg'
-S3_KEY_ID = os.environ.get('S1YUNPAN_ACCESS_KEY_ID', '')
-S3_KEY_SECRET = os.environ.get('S1YUNPAN_SECRET_ACCESS_KEY', '')
+# R2 config
+R2_ENDPOINT = 'https://95c11acbf13b01b3cd1ec169081835e1.r2.cloudflarestorage.com'
+R2_BUCKET = 'imgbed'
 
 # Supabase config
-ANON_KEY = os.environ.get('SUPABASE_ANON_KEY', '')
 PROJECT_REF = 'adfirxacvkcoasbujbgo'
+DEFAULT_COVER_URL = 'https://img.osp.io/default_cover.png'
+RATE_LIMIT_DELAY = 0.3
 
-# Minimal transparent PNG fallback (1x1 pixel)
-DEFAULT_COVER_PNG = (
-    b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00'
-    b'\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\nIDATx'
-    b'\x9cc\x00\x01\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82'
-)
-DEFAULT_COVER_KEY = 'covers/default.png'
-
-if S3_KEY_ID and S3_KEY_SECRET:
+if os.environ.get('R2_ACCESS_KEY_ID') and os.environ.get('R2_SECRET_ACCESS_KEY'):
     s3 = boto3.client(
-        's3', endpoint_url=S3_ENDPOINT,
-        aws_access_key_id=S3_KEY_ID,
-        aws_secret_access_key=S3_KEY_SECRET,
+        's3',
+        endpoint_url=R2_ENDPOINT,
+        aws_access_key_id=os.environ['R2_ACCESS_KEY_ID'],
+        aws_secret_access_key=os.environ['R2_SECRET_ACCESS_KEY'],
         region_name='auto',
-        config=Config(signature_version='s3v4', s3={'addressing_style': 'path'})
+        config=Config(signature_version='s3v4')
     )
 else:
-    # fallback for local dev
     s3 = None
-    print('Warning: S3 credentials not set, dry run mode')
+    print('Error: R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY not set')
+    sys.exit(1)
 
 
-def get_existing_mbids():
-    """Return set of MBIDs that already have covers in S3."""
-    if not s3:
-        return set()
-    existing = set()
-    try:
-        resp = s3.list_objects_v2(Bucket=S3_BUCKET, Prefix='covers/', MaxKeys=1000)
-        for obj in resp.get('Contents', []):
-            key = obj['Key']
-            if key.startswith('covers/') and key.endswith('.jpg'):
-                mbid = key[7:-4]
-                existing.add(mbid)
-    except Exception as e:
-        print('Warning: could not list existing covers:', e)
-    return existing
-
-
-def ensure_default_cover():
-    """Upload default cover if not already in S3."""
-    if not s3:
-        return
-    try:
-        s3.head_object(Bucket=S3_BUCKET, Key=DEFAULT_COVER_KEY)
-        print('  Default cover already exists')
-    except Exception:
-        s3.put_object(Bucket=S3_BUCKET, Key=DEFAULT_COVER_KEY,
-                      Body=DEFAULT_COVER_PNG, ContentType='image/png')
-        print('  Uploaded default cover')
+def list_existing_covers():
+    """Return set of cover keys already in R2."""
+    resp = s3.list_objects_v2(Bucket=R2_BUCKET, Prefix='covers/', MaxKeys=1000)
+    return {obj['Key'] for obj in resp.get('Contents', [])}
 
 
 def get_chart_tracks(date, source):
+    anon_key = os.environ.get('SUPABASE_ANON_KEY', '')
     url = f'https://{PROJECT_REF}.supabase.co/rest/v1/charts?date=eq.{date}&source=eq.{source}&select=mbid,artist,track_name,rank'
     req = urllib.request.Request(url)
-    req.add_header('apikey', ANON_KEY)
-    req.add_header('Authorization', 'Bearer ' + ANON_KEY)
+    req.add_header('apikey', anon_key)
+    req.add_header('Authorization', 'Bearer ' + anon_key)
     req.add_header('Accept-Profile', 'public')
     with urllib.request.urlopen(req, timeout=10) as resp:
         return json.loads(resp.read())
 
 
-def fetch_cover_itunes(artist, track, retries=2):
-    q = (artist + ' ' + track).replace(' ', '+')
-    for _ in range(retries):
+def search_itunes(artist, track):
+    q = urllib.parse.quote(f'{artist} {track}')
+    for attempt in range(2):
         try:
-            u = 'https://itunes.apple.com/search?term=' + q + '&entity=song&limit=1'
-            with urllib.request.urlopen(u, timeout=8) as r:
+            u = f'https://itunes.apple.com/search?term={q}&entity=song&limit=1'
+            with urllib.request.urlopen(urllib.request.Request(u, headers={'User-Agent': 'Mozilla/5.0'}), timeout=8) as r:
                 res = json.loads(r.read())
             if res['resultCount'] > 0:
-                img = res['results'][0]['artworkUrl100'].replace('100x100', '600x600')
-                with urllib.request.urlopen(img, timeout=8) as r:
-                    return r.read(), r.headers.get('Content-Type', 'image/jpeg')
+                artwork = res['results'][0].get('artworkUrl600') or res['results'][0].get('artworkUrl100')
+                if artwork:
+                    return artwork.replace('600x600', '300x300')
         except Exception:
             pass
         time.sleep(0.5)
-    return None, None
+    return None
+
+
+def download_image(url):
+    try:
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return r.read()
+    except Exception:
+        return None
+
+
+def upload_cover(key, data):
+    for attempt in range(2):
+        try:
+            s3.put_object(Bucket=R2_BUCKET, Key=key, Body=data, ContentType='image/jpeg')
+            return True
+        except Exception as e:
+            print(f'    Upload error (attempt {attempt+1}): {e}')
+            time.sleep(1)
+    return False
+
+
+def safe_key(mbid, artist, track):
+    if mbid:
+        return f'covers/{mbid}.jpg'
+    # fallback: safe filename from artist+track
+    safe = re.sub(r'[^\w\-_ ]', '_', f'{artist} {track}')[:80]
+    return f'covers/{safe}.jpg'
 
 
 def main():
-    if not S3_KEY_ID or not S3_KEY_SECRET or not s3:
-        print('Error: S1YUNPAN_ACCESS_KEY_ID / S1YUNPAN_SECRET_ACCESS_KEY / SUPABASE_ANON_KEY not set')
-        sys.exit(1)
+    existing = list_existing_covers()
+    print(f'Existing covers in R2: {len(existing)}')
 
-    ensure_default_cover()
-
-    existing = get_existing_mbids()
-    print('Existing covers in S3: ' + str(len(existing)))
-
+    anon_key = os.environ.get('SUPABASE_ANON_KEY', '')
     # Get latest chart date
-    today_url = 'https://' + PROJECT_REF + '.supabase.co/rest/v1/charts?select=date&order=date.desc&limit=1'
-    req = urllib.request.Request(today_url)
-    req.add_header('apikey', ANON_KEY)
-    req.add_header('Authorization', 'Bearer ' + ANON_KEY)
+    url = f'https://{PROJECT_REF}.supabase.co/rest/v1/charts?select=date&order=date.desc&limit=1'
+    req = urllib.request.Request(url)
+    req.add_header('apikey', anon_key)
+    req.add_header('Authorization', 'Bearer ' + anon_key)
     req.add_header('Accept-Profile', 'public')
     with urllib.request.urlopen(req, timeout=10) as r:
         dates = json.loads(r.read())
@@ -120,43 +112,41 @@ def main():
         return
 
     latest_date = dates[0]['date']
-    print('Processing date: ' + latest_date)
+    print(f'Processing date: {latest_date}')
 
     for source in ['lastfm', 'billboard']:
         tracks = get_chart_tracks(latest_date, source)
-        print('  ' + source + ': ' + str(len(tracks)) + ' tracks')
-        new_count = skip_count = fail_count = 0
+        print(f'  {source}: {len(tracks)} tracks')
+        new_covers = skip_count = fail_count = 0
 
         for t in tracks:
-            mbid = t.get('mbid')
-            if not mbid or mbid in existing:
+            mbid = t.get('mbid') or ''
+            key = safe_key(mbid, t['artist'], t['track_name'])
+
+            if key in existing:
                 skip_count += 1
                 continue
 
-            print('  Fetching: ' + t['artist'] + ' - ' + t['track_name'] + ' (mbid=' + mbid + ')')
-            data, ctype = fetch_cover_itunes(t['artist'], t['track_name'])
-
-            if data:
-                key = 'covers/' + mbid + '.jpg'
-                s3.put_object(Bucket=S3_BUCKET, Key=key, Body=data, ContentType=ctype)
-                print('    -> Uploaded ' + str(len(data)) + 'b')
-                existing.add(mbid)
-                new_count += 1
+            artwork_url = search_itunes(t['artist'], t['track_name'])
+            if artwork_url:
+                img_data = download_image(artwork_url)
+                if img_data and upload_cover(key, img_data):
+                    print(f'  [{t["rank"]}] {t["artist"]} - {t["track_name"]} -> uploaded')
+                    new_covers += 1
+                else:
+                    fail_count += 1
             else:
-                # Use default cover as fallback
-                try:
-                    s3.copy_object(Bucket=S3_BUCKET, Key='covers/' + mbid + '.jpg',
-                                   CopySource={'Bucket': S3_BUCKET, 'Key': DEFAULT_COVER_KEY})
-                    print('    -> Used default cover (no art found)')
-                    existing.add(mbid)
-                except Exception as e:
-                    print('    -> Default cover failed: ' + str(e))
-                fail_count += 1
-                new_count += 1
+                # Fallback to default cover
+                img_data = download_image(DEFAULT_COVER_URL)
+                if img_data:
+                    upload_cover(key, img_data)
+                    print(f'  [{t["rank"]}] {t["artist"]} - {t["track_name"]} -> default (no iTunes match)')
+                new_covers += 1
 
-            time.sleep(0.3)
+            existing.add(key)
+            time.sleep(RATE_LIMIT_DELAY)
 
-        print('  ' + source + ': ' + str(new_count) + ' new, ' + str(skip_count) + ' skipped, ' + str(fail_count) + ' failed')
+        print(f'  {source}: {new_covers} new, {skip_count} skipped, {fail_count} failed')
 
     print('Done')
 
