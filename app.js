@@ -62,10 +62,11 @@ async function renderHome() {
     <div class="tab-bar">
       <button data-source="lastfm" class="active">Last.fm Top 50</button>
       <button data-source="billboard">Billboard Hot 100</button>
+      <button data-source="qqmusic">QQ Music — Europe & US</button>
     </div>
     <div class="track-list" id="track-list"></div>
     <footer>
-      <p>Powered by Last.fm · Billboard · MusicBrainz · Spotify · Supabase</p>
+      <p>Powered by Last.fm · Billboard · QQ Music · MusicBrainz · Spotify · Supabase</p>
       <p style="margin-top:6px">music.herebuy.us · built with ❤️ by Yuki</p>
     </footer>
   `;
