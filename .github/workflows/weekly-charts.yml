@@ -63,3 +63,8 @@ jobs:
           S1YUNPAN_SECRET_ACCESS_KEY: ${{ secrets.S1YUNPAN_SECRET_ACCESS_KEY }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
         run: python3 ci/scripts/fetch_covers.py
+
+      - name: Update last_updated timestamp
+        env:
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: python3 ci/scripts/update_meta.py
