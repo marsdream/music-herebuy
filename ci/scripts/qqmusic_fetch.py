@@ -75,8 +75,8 @@ def main():
     top_name, tracks = fetch_all_pages(CHART_ID)
     print(f'  Chart: {top_name}, Tracks: {len(tracks)}')
     success = 0
-    for t in tracks:
-        rank = t.get('rank') or 0
+    for i, t in enumerate(tracks):
+        rank = i + 1
         song_mid = t.get('songMid', '')
         song_name = t.get('songName', '')
         singer_name = t.get('singerName', '')
