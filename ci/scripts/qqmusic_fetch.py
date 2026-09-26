@@ -9,7 +9,7 @@ CHART_ID = 3
 SKILL_VERSION = '0.0.3'
 
 def supabase_headers():
-    anon_key = os.environ.get('SUPABASE_ANON_KEY', '')
+    anon_key = os.environ.get('SUPABASE_SERVICE_ROLE_KEY') or os.environ.get('SUPABASE_ANON_KEY', '')
     return {'apikey': anon_key, 'Authorization': f'Bearer {anon_key}', 'Content-Type': 'application/json', 'Accept-Profile': 'public'}
 
 def call_qqmusic(path, params):
@@ -39,7 +39,7 @@ def today_date():
     return datetime.datetime.utcnow().strftime('%Y-%m-%d')
 
 def upsert_track(date, source, rank, song_mid, song_name, singer_name, cover_url):
-    anon_key = os.environ.get('SUPABASE_ANON_KEY', '')
+    anon_key = os.environ.get('SUPABASE_SERVICE_ROLE_KEY') or os.environ.get('SUPABASE_ANON_KEY', '')
     query = f'date=eq.{date}&source=eq.{source}&rank=eq.{rank}'
     url = f'{SUPABASE_URL}/rest/v1/charts?{query}'
     req = urllib.request.Request(url)
