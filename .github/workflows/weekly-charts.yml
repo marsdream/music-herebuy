@@ -43,7 +43,8 @@ jobs:
       - name: Run QQ Music fetch
         env:
           QQMUSIC_API_KEY: ${{ secrets.QQMUSIC_API_KEY }}
-          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
         run: python3 ci/scripts/qqmusic_fetch.py
 
       - name: Run MusicBrainz lookup
