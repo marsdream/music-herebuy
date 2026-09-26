@@ -134,6 +134,7 @@ def main():
     print(f'Processing date: {latest_date}')
 
     for source in ['lastfm', 'billboard']:
+        # Note: 'qqmusic' is excluded — its cover_url is set directly by qqmusic_fetch.py
         tracks = get_chart_tracks(latest_date, source)
         print(f'  {source}: {len(tracks)} tracks')
         new_covers = skip_count = fail_count = 0

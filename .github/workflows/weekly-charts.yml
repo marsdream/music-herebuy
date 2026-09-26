@@ -40,6 +40,12 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
         run: python3 ci/scripts/billboard_fetch.py
 
+      - name: Run QQ Music fetch
+        env:
+          QQMUSIC_API_KEY: ${{ secrets.QQMUSIC_API_KEY }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: python3 ci/scripts/qqmusic_fetch.py
+
       - name: Run MusicBrainz lookup
         run: python3 ci/scripts/musicbrainz_lookup.py
 
