@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
-"""Fetch album covers and upload to 1yunpan S3 via curl (avoids boto3 chunked encoding bug).
-Skips tracks already having covers. Falls back to default cover (img.osp.io).
+"""Fetch album covers and store as cover_url in Supabase.
+- Last.fm tracks: upload to 1yunpan S3, store S3 URL as cover_url
+- Billboard tracks: store iTunes artwork URL directly as cover_url
 """
 import os, sys, json, time, re, urllib.parse, subprocess, datetime, hashlib, hmac, urllib.request
 
 S3_ENDPOINT = 'https://s3.1yunpan.com'
 S3_BUCKET = '5qsfmqsm5ukg'
 PROJECT_REF = 'adfirxacvkcoasbujbgo'
+SUPABASE_URL = f'https://{PROJECT_REF}.supabase.co'
 DEFAULT_COVER_URL = 'https://img.osp.io/default_cover.png'
 RATE_LIMIT_DELAY = 0.3
 
@@ -14,94 +16,75 @@ RATE_LIMIT_DELAY = 0.3
 def s3_cred():
     ak = os.environ.get('S1YUNPAN_ACCESS_KEY_ID', '')
     sk = os.environ.get('S1YUNPAN_SECRET_ACCESS_KEY', '')
-    if not ak or not sk:
-        return None, None
-    return ak, sk
+    return (ak, sk) if (ak and sk) else (None, None)
 
 
-def sig_v4(ak, sk, method, path, host, headers, body_hash):
+def sig_v4(ak, sk, method, path, host, extra_headers, body_hash):
     t = datetime.datetime.utcnow()
     amz_date = t.strftime('%Y%m%dT%H%M%SZ')
     date_stamp = t.strftime('%Y%m%d')
     region = 'auto'
     service = 's3'
-
-    signed_headers = ';'.join(sorted(headers.keys()))
-    canonical = f'{method}\n{path}\n\n' + '\n'.join(f'{k}:{v}' for k, v in sorted(headers.items())) + f'\n\n{signed_headers}\n{body_hash}'
+    headers = {**extra_headers, 'x-amz-date': amz_date}
+    canonical = f'{method}\n{path}\n\n' + '\n'.join(f'{k}:{headers[k]}' for k in sorted(headers.keys())) + f'\n\n' + ';'.join(sorted(headers.keys())) + f'\n{body_hash}'
     canonical_hash = hashlib.sha256(canonical.encode()).hexdigest()
     scope = f'{date_stamp}/{region}/{service}/aws4_request'
     sts = f'AWS4-HMAC-SHA256\n{amz_date}\n{scope}\n{canonical_hash}'
-
     k1 = hmac.new(b'AWS4' + sk.encode(), date_stamp.encode(), hashlib.sha256).digest()
     k2 = hmac.new(k1, region.encode(), hashlib.sha256).digest()
     k3 = hmac.new(k2, service.encode(), hashlib.sha256).digest()
     k4 = hmac.new(k3, b'aws4_request', hashlib.sha256).digest()
     sig = hmac.new(k4, sts.encode(), hashlib.sha256).hexdigest()
-    auth = f'AWS4-HMAC-SHA256 Credential={ak}/{scope}, SignedHeaders={signed_headers}, Signature={sig}'
+    auth = f'AWS4-HMAC-SHA256 Credential={ak}/{scope}, SignedHeaders=' + ';'.join(sorted(headers.keys())) + f', Signature={sig}'
     return amz_date, auth
 
 
-def upload_curl(ak, sk, key, data):
+def upload_1yunpan(ak, sk, key, data):
     host = 's3.1yunpan.com'
     path = f'/{S3_BUCKET}/{key}'
     body_hash = hashlib.sha256(data).hexdigest()
-    headers = {
-        'content-type': 'image/jpeg',
-        'host': host,
-        'x-amz-content-sha256': body_hash,
-    }
+    headers = {'content-type': 'image/jpeg', 'host': host, 'x-amz-content-sha256': body_hash}
     amz_date, auth = sig_v4(ak, sk, 'PUT', path, host, headers, body_hash)
-    headers['x-amz-date'] = amz_date
-    headers['Authorization'] = auth
-
-    with open('/tmp/_cover_upload.jpg', 'wb') as f:
+    h = {**headers, 'x-amz-date': amz_date, 'Authorization': auth}
+    with open('/tmp/_cover_up.jpg', 'wb') as f:
         f.write(data)
-
-    header_args = []
-    for k, v in sorted(headers.items()):
-        header_args += ['-H', f'{k}: {v}']
-
     r = subprocess.run([
-        'curl', '-s', '-X', 'PUT',
-        '--noproxy', '*',
-        '-T', '/tmp/_cover_upload.jpg',
-    ] + header_args + [
-        f'{S3_ENDPOINT}/{S3_BUCKET}/{key}',
-        '-w', '\nHTTP_CODE:%{http_code}'
+        'curl', '-s', '-X', 'PUT', '--noproxy', '*', '-T', '/tmp/_cover_up.jpg',
+    ] + sum([['-H', f'{k}: {v}'] for k, v in sorted(h.items())], []) + [
+        f'{S3_ENDPOINT}/{S3_BUCKET}/{key}', '-w', '\nHTTP_CODE:%{http_code}'
     ], capture_output=True, text=True)
     return 'HTTP_CODE:200' in r.stdout
 
 
-def list_existing():
-    ak, sk = s3_cred()
-    if not ak:
-        return set()
-    host = 's3.1yunpan.com'
-    path = f'/{S3_BUCKET}/?list-type=2&prefix=covers/'
-    body_hash = hashlib.sha256(b'').hexdigest()
-    headers = {'host': host, 'x-amz-content-sha256': body_hash}
-    amz_date, auth = sig_v4(ak, sk, 'GET', path, host, headers, body_hash)
-    h = {'host': host, 'x-amz-content-sha256': body_hash, 'x-amz-date': amz_date, 'Authorization': auth}
-
-    r = subprocess.run([
-        'curl', '-s', '--noproxy', '*',
-    ] + sum([['-H', f'{k}: {v}'] for k, v in sorted(h.items())], []) + [
-        f'{S3_ENDPOINT}/{S3_BUCKET}/?list-type=2&prefix=covers/'
-    ], capture_output=True, text=True)
-
-    keys = re.findall(r'<Key>(covers/[^<]+)</Key>', r.stdout)
-    return set(keys)
-
-
 def get_chart_tracks(date, source):
     anon_key = os.environ.get('SUPABASE_ANON_KEY', '')
-    url = f'https://{PROJECT_REF}.supabase.co/rest/v1/charts?date=eq.{date}&source=eq.{source}&select=mbid,artist,track_name,rank'
+    url = f'{SUPABASE_URL}/rest/v1/charts?date=eq.{date}&source=eq.{source}&select=mbid,artist,track_name,rank'
     req = urllib.request.Request(url)
     req.add_header('apikey', anon_key)
     req.add_header('Authorization', 'Bearer ' + anon_key)
     req.add_header('Accept-Profile', 'public')
     with urllib.request.urlopen(req, timeout=10) as resp:
         return json.loads(resp.read())
+
+
+def update_cover_url(mbid, cover_url):
+    """Update cover_url in Supabase charts table for given MBID."""
+    if not mbid:
+        return
+    anon_key = os.environ.get('SUPABASE_ANON_KEY', '')
+    url = f'{SUPABASE_URL}/rest/v1/charts?mbid=eq.{mbid}'
+    payload = json.dumps({'cover_url': cover_url}).encode()
+    req = urllib.request.Request(url, data=payload, method='PATCH')
+    req.add_header('apikey', anon_key)
+    req.add_header('Authorization', 'Bearer ' + anon_key)
+    req.add_header('Content-Type', 'application/json')
+    req.add_header('Prefer', 'return=minimal')
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return resp.status in (200, 204, 201)
+    except Exception as e:
+        print(f'    DB update error: {e}')
+        return False
 
 
 def search_itunes(artist, track):
@@ -130,35 +113,23 @@ def download_image(url):
         return None
 
 
-def safe_key(mbid, artist, track):
-    if mbid:
-        return f'covers/{mbid}.jpg'
-    safe = re.sub(r'[^\w\-_ ]', '_', f'{artist} {track}')[:80]
-    return f'covers/{safe}.jpg'
-
-
 def main():
     ak, sk = s3_cred()
     if not ak:
         print('Error: S1YUNPAN_ACCESS_KEY_ID / S1YUNPAN_SECRET_ACCESS_KEY not set')
         sys.exit(1)
 
-    existing = list_existing()
-    print(f'Existing covers in 1yunpan: {len(existing)}')
-
     anon_key = os.environ.get('SUPABASE_ANON_KEY', '')
-    url = f'https://{PROJECT_REF}.supabase.co/rest/v1/charts?select=date&order=date.desc&limit=1'
+    url = f'{SUPABASE_URL}/rest/v1/charts?select=date&order=date.desc&limit=1'
     req = urllib.request.Request(url)
     req.add_header('apikey', anon_key)
     req.add_header('Authorization', 'Bearer ' + anon_key)
     req.add_header('Accept-Profile', 'public')
     with urllib.request.urlopen(req, timeout=10) as r:
         dates = json.loads(r.read())
-
     if not dates:
         print('No chart dates found')
         return
-
     latest_date = dates[0]['date']
     print(f'Processing date: {latest_date}')
 
@@ -169,28 +140,37 @@ def main():
 
         for t in tracks:
             mbid = t.get('mbid') or ''
-            key = safe_key(mbid, t['artist'], t['track_name'])
+            track_name = t['track_name']
+            artist = t['artist']
+            rank = t['rank']
 
-            if key in existing:
-                skip_count += 1
+            artwork_url = search_itunes(artist, track_name)
+            if not artwork_url:
+                print(f'  [{rank}] {track_name} - {artist}: no iTunes match, using default')
+                update_cover_url(mbid, DEFAULT_COVER_URL)
+                new_covers += 1
+                time.sleep(RATE_LIMIT_DELAY)
                 continue
 
-            artwork_url = search_itunes(t['artist'], t['track_name'])
-            if artwork_url:
+            if source == 'lastfm' and mbid:
+                # Upload to 1yunpan, store S3 URL
                 img_data = download_image(artwork_url)
-                if img_data and upload_curl(ak, sk, key, img_data):
-                    print(f'  [{t["rank"]}] {t["artist"]} - {t["track_name"]} -> ok ({len(img_data)} bytes)')
+                if img_data and upload_1yunpan(ak, sk, f'covers/{mbid}.jpg', img_data):
+                    s3_url = f'https://id5qsfmqsm5ukg.1yunpan.com/covers/{mbid}.jpg'
+                    update_cover_url(mbid, s3_url)
+                    print(f'  [{rank}] {track_name} - {artist}: {len(img_data)} bytes -> 1yunpan')
                     new_covers += 1
                 else:
+                    # Fallback to iTunes URL directly
+                    update_cover_url(mbid, artwork_url)
+                    print(f'  [{rank}] {track_name} - {artist}: upload failed, using iTunes direct')
                     fail_count += 1
             else:
-                img_data = download_image(DEFAULT_COVER_URL)
-                if img_data:
-                    upload_curl(ak, sk, key, img_data)
-                    print(f'  [{t["rank"]}] {t["artist"]} - {t["track_name"]} -> default (no iTunes match)')
+                # Billboard or no MBID: store iTunes URL directly as cover_url
+                update_cover_url(mbid, artwork_url)
+                print(f'  [{rank}] {track_name} - {artist}: iTunes direct -> {artwork_url[-40:]}')
                 new_covers += 1
 
-            existing.add(key)
             time.sleep(RATE_LIMIT_DELAY)
 
         print(f'  {source}: {new_covers} new, {skip_count} skipped, {fail_count} failed')
