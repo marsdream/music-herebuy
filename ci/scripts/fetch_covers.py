@@ -67,12 +67,12 @@ def get_chart_tracks(date, source):
         return json.loads(resp.read())
 
 
-def update_cover_url(mbid, cover_url):
-    """Update cover_url in Supabase charts table for given MBID."""
-    if not mbid:
-        return
+def update_cover_url(track, cover_url):
+    """Update cover_url in Supabase charts table. Uses date+source+rank for unique match."""
     anon_key = os.environ.get('SUPABASE_ANON_KEY', '')
-    url = f'{SUPABASE_URL}/rest/v1/charts?mbid=eq.{mbid}'
+    # Use date+source+rank as unique key (mbid may be empty for Billboard)
+    query = f"date=eq.{track['date']}&source=eq.{track['source']}&rank=eq.{track['rank']}"
+    url = f'{SUPABASE_URL}/rest/v1/charts?{query}'
     payload = json.dumps({'cover_url': cover_url}).encode()
     req = urllib.request.Request(url, data=payload, method='PATCH')
     req.add_header('apikey', anon_key)
@@ -147,7 +147,7 @@ def main():
             artwork_url = search_itunes(artist, track_name)
             if not artwork_url:
                 print(f'  [{rank}] {track_name} - {artist}: no iTunes match, using default')
-                update_cover_url(mbid, DEFAULT_COVER_URL)
+                update_cover_url(t, DEFAULT_COVER_URL)
                 new_covers += 1
                 time.sleep(RATE_LIMIT_DELAY)
                 continue
@@ -157,17 +157,17 @@ def main():
                 img_data = download_image(artwork_url)
                 if img_data and upload_1yunpan(ak, sk, f'covers/{mbid}.jpg', img_data):
                     s3_url = f'https://id5qsfmqsm5ukg.1yunpan.com/covers/{mbid}.jpg'
-                    update_cover_url(mbid, s3_url)
+                    update_cover_url(t, s3_url)
                     print(f'  [{rank}] {track_name} - {artist}: {len(img_data)} bytes -> 1yunpan')
                     new_covers += 1
                 else:
                     # Fallback to iTunes URL directly
-                    update_cover_url(mbid, artwork_url)
+                    update_cover_url(t, artwork_url)
                     print(f'  [{rank}] {track_name} - {artist}: upload failed, using iTunes direct')
                     fail_count += 1
             else:
                 # Billboard or no MBID: store iTunes URL directly as cover_url
-                update_cover_url(mbid, artwork_url)
+                update_cover_url(t, artwork_url)
                 print(f'  [{rank}] {track_name} - {artist}: iTunes direct -> {artwork_url[-40:]}')
                 new_covers += 1
 
