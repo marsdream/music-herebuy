@@ -58,7 +58,7 @@ def upload_1yunpan(ak, sk, key, data):
 
 def get_chart_tracks(date, source):
     anon_key = os.environ.get('SUPABASE_ANON_KEY', '')
-    url = f'{SUPABASE_URL}/rest/v1/charts?date=eq.{date}&source=eq.{source}&select=mbid,artist,track_name,rank'
+    url = f'{SUPABASE_URL}/rest/v1/charts?date=eq.{date}&source=eq.{source}&select=date,mbid,artist,track_name,rank'
     req = urllib.request.Request(url)
     req.add_header('apikey', anon_key)
     req.add_header('Authorization', 'Bearer ' + anon_key)
