@@ -67,7 +67,8 @@ async function renderHome() {
     <div class="track-list" id="track-list"></div>
     <footer>
       <p>Powered by Last.fm · Billboard · QQ Music · MusicBrainz · Spotify · Supabase</p>
-      <p style="margin-top:6px">music.herebuy.us · built with ❤️ by Yuki</p>
+      <p>music.herebuy.us · built with ❤️ by Yuki</p>
+      <p id="last-updated" style="margin-top:4px;font-size:12px;color:#666"></p>
     </footer>
   `;
 
@@ -80,6 +81,13 @@ async function renderHome() {
   select.innerHTML = dates.map(d => `<option value="${d}">${fmtDate(d)}</option>`).join('');
   select.value = dates[0];
   hint.textContent = `${dates.length} dates available · ↑↓ = change vs last week`;
+
+  // Load last_updated from meta table
+  try {
+    const meta = await supabaseGet('meta?key=eq.last_updated&select=value');
+    const el = document.getElementById('last-updated');
+    if (el && meta && meta.length) el.textContent = 'last updated ' + meta[0].value;
+  } catch {}
 
   let currentSource = 'lastfm';
 
