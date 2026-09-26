@@ -8,6 +8,16 @@ const headers = () => ({
   'Content-Type': 'application/json',
 });
 
+const COVER_CDN = 'https://id5qsfmqsm5ukg.1yunpan.com';
+
+function coverUrl(mbid) {
+  if (!mbid) return null;
+  return `${COVER_CDN}/covers/${mbid}.jpg`;
+}
+
+function escHtml(s) { if (s == null) return ''; const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+function fmtCount(n) { const num = parseInt(n, 10); if (isNaN(num)) return n; if (num >= 1e6) return (num/1e6).toFixed(1)+'M'; if (num >= 1e3) return (num/1e3).toFixed(1)+'K'; return num.toString(); }
+
 async function supabaseGet(table, qs = '', opts = {}) {
   const url = `${API}/${table}${qs}`;
   const resp = await fetch(url, { ...opts, headers: { ...headers(), 'Accept-Profile': 'public' } });
@@ -34,9 +44,6 @@ function fmtDate(dateStr) {
   if (!dateStr) return '—';
   return new Date(dateStr + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
 }
-
-function escHtml(s) { if (s == null) return ''; const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
-function fmtCount(n) { const num = parseInt(n, 10); if (isNaN(num)) return n; if (num >= 1e6) return (num/1e6).toFixed(1)+'M'; if (num >= 1e3) return (num/1e3).toFixed(1)+'K'; return num.toString(); }
 
 async function renderHome() {
   const wrap = document.getElementById('content');
@@ -90,6 +97,8 @@ async function renderHome() {
       const hasSp = !!(t.spotify_url && t.spotify_url.length > 0);
       const key = `${t.track_name}::${t.artist}`;
       const prevRank = prevMap[key];
+      const mbid = t.mbid || '';
+      const cover = coverUrl(mbid);
       let trendHtml = '';
       if (prevRank !== undefined) {
         const diff = prevRank - rank;
@@ -99,8 +108,12 @@ async function renderHome() {
       } else {
         trendHtml = `<span class="trend new" title="New entry this week">NEW</span>`;
       }
+      const coverImg = cover
+        ? `<img class="track-cover" src="${escHtml(cover)}" alt="" onerror="this.style.display='none'" loading="lazy">`
+        : `<span class="track-cover-placeholder">♪</span>`;
       return `<div class="track-row">
         <span class="rank ${rank <= 3 ? 'top3' : ''}">#${rank}</span>
+        ${coverImg}
         ${trendHtml}
         <div class="info">
           <div class="title">${escHtml(t.track_name)}</div>
@@ -150,9 +163,8 @@ async function renderIdeas() {
   }
 
   const picker = document.getElementById('date-picker');
-  // Populate dropdown
   picker.innerHTML = dates.map(d => `<option value="${d}">${fmtDate(d)}</option>`).join('');
-  picker.value = dates[0]; // default to latest
+  picker.value = dates[0];
   document.getElementById('today-badge').textContent = `📅 ${fmtDate(dates[0])}`;
 
   async function loadIdeas(date) {
@@ -177,9 +189,7 @@ async function renderIdeas() {
     } catch(e) { grid.innerHTML = `<div class="error">⚠ Failed: ${escHtml(e.message)}</div>`; }
   }
 
-  // On picker change, reload
   picker.addEventListener('change', () => loadIdeas(picker.value));
-  // Initial load
   loadIdeas(dates[0]);
 }
 
@@ -195,11 +205,15 @@ async function renderTrack() {
     if (!t) { wrap.innerHTML += '<div class="error">Track not found</div>'; return; }
     const genResp = await fetch(`${API}/music_generations?id=eq.${trackId}&select=*,idea!inner(id,mood,prompt,style_hint)`, { headers: { ...headers(), 'Accept-Profile': 'public' } });
     const gens = genResp.ok ? await genResp.json() : [];
+    const cover = coverUrl(t.mbid || '');
+    const coverHtml = cover
+      ? `<img class="track-detail-cover" src="${escHtml(cover)}" alt="" onerror="this.parentElement.innerHTML='🎧'">`
+      : `<div class="track-detail-cover-placeholder">🎧</div>`;
     if (gens.length) {
       const g = gens[0], idea = g.idea;
-      wrap.innerHTML = `<div class="page-title"><h1>🎵 AI Track</h1><span class="date-badge">${(g.created_at||'').slice(0,10)}</span></div><div class="track-detail"><div class="cover">🎛️</div><h2>${escHtml(idea.mood||'Untitled')}</h2><div class="artist">${escHtml(idea.style_hint||'')} · ${escHtml(g.provider||'')}</div><div style="color:var(--text-dim);font-size:13px;margin-bottom:14px">${escHtml(idea.prompt||'')}</div><audio controls style="width:100%"><source src="${escHtml(g.s3_mp3_url||'')}" type="audio/mpeg"></audio><div class="meta-grid"><div class="meta-item"><span class="label">Provider</span><span class="value">${escHtml(g.provider||'')}</span></div><div class="meta-item"><span class="label">Status</span><span class="value">${escHtml(g.status||'')}</span></div><div class="meta-item"><span class="label">S3 URL</span><span class="value">${escHtml(g.s3_mp3_url||'')}</span></div><div class="meta-item"><span class="label">Mood</span><span class="value">${escHtml(idea.mood||'')}</span></div></div></div>`;
+      wrap.innerHTML = `<div class="page-title"><h1>🎵 AI Track</h1><span class="date-badge">${(g.created_at||'').slice(0,10)}</span></div><div class="track-detail">${coverHtml}<h2>${escHtml(idea.mood||'Untitled')}</h2><div class="artist">${escHtml(idea.style_hint||'')} · ${escHtml(g.provider||'')}</div><div style="color:var(--text-dim);font-size:13px;margin-bottom:14px">${escHtml(idea.prompt||'')}</div><audio controls style="width:100%"><source src="${escHtml(g.s3_mp3_url||'')}" type="audio/mpeg"></audio><div class="meta-grid"><div class="meta-item"><span class="label">Provider</span><span class="value">${escHtml(g.provider||'')}</span></div><div class="meta-item"><span class="label">Status</span><span class="value">${escHtml(g.status||'')}</span></div><div class="meta-item"><span class="label">S3 URL</span><span class="value">${escHtml(g.s3_mp3_url||'')}</span></div><div class="meta-item"><span class="label">Mood</span><span class="value">${escHtml(idea.mood||'')}</span></div></div></div>`;
     } else {
-      wrap.innerHTML = `<div class="page-title"><h1>🎵 Track</h1></div><div class="track-detail"><div class="cover">🎧</div><h2>${escHtml(t.track_name)}</h2><div class="artist">${escHtml(t.artist)}</div><div class="meta-grid"><div class="meta-item"><span class="label">Source</span><span class="value">${escHtml(t.source||'')}</span></div><div class="meta-item"><span class="label">Rank</span><span class="value">#${t.rank||'-'}</span></div><div class="meta-item"><span class="label">Playcount</span><span class="value">${t.playcount?fmtCount(t.playcount):'-'}</span></div><div class="meta-item"><span class="label">Date</span><span class="value">${escHtml(t.date||'')}</span></div></div><div class="meta-item" style="margin-top:12px"><span class="label">MBID</span><span class="value">${escHtml(t.mbid||'not available')}</span></div><a class="sp-link-big" href="${escHtml(t.spotify_url||'')}" target="_blank">${t.spotify_url?'▶ Listen on Spotify ↗':'No Spotify link'}</a></div>`;
+      wrap.innerHTML = `<div class="page-title"><h1>🎵 Track</h1></div><div class="track-detail">${coverHtml}<h2>${escHtml(t.track_name)}</h2><div class="artist">${escHtml(t.artist)}</div><div class="meta-grid"><div class="meta-item"><span class="label">Source</span><span class="value">${escHtml(t.source||'')}</span></div><div class="meta-item"><span class="label">Rank</span><span class="value">#${t.rank||'-'}</span></div><div class="meta-item"><span class="label">Playcount</span><span class="value">${t.playcount?fmtCount(t.playcount):'-'}</span></div><div class="meta-item"><span class="label">Date</span><span class="value">${escHtml(t.date||'')}</span></div></div><div class="meta-item" style="margin-top:12px"><span class="label">MBID</span><span class="value">${escHtml(t.mbid||'not available')}</span></div><a class="sp-link-big" href="${escHtml(t.spotify_url||'')}" target="_blank">${t.spotify_url?'▶ Listen on Spotify ↗':'No Spotify link'}</a></div>`;
     }
   } catch(e) { wrap.innerHTML += `<div class="error">⚠ ${escHtml(e.message)}</div>`; }
 }
@@ -211,4 +225,3 @@ function main() {
   else if (page === 'track') renderTrack();
 }
 document.addEventListener('DOMContentLoaded', main);
-
